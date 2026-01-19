@@ -267,6 +267,12 @@ uv run ruff check . --fix
 uv run ruff format .
 ```
 
+### Running tests
+
+```bash
+uv run pytest
+```
+
 ## Troubleshooting
 
 ### "Invalid API key" error
