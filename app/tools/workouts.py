@@ -167,6 +167,8 @@ async def get_workouts(
                 }
 
         # Step 2: Calculate date range
+        assert resolved_user is not None
+        user_id_str = str(resolved_user["id"])
         end_date = datetime.now(UTC)
         start_date = end_date - timedelta(days=days)
 
@@ -175,7 +177,7 @@ async def get_workouts(
 
         # Step 3: Fetch workout data
         workouts_response = await client.get_workouts(
-            user_id=resolved_user["id"],
+            user_id=user_id_str,
             start_date=start_str,
             end_date=end_str,
             workout_type=workout_type,
