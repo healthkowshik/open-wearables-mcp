@@ -51,6 +51,10 @@ class OpenWearablesClient:
                 raise ValueError("Invalid API key. Check your OPEN_WEARABLES_API_KEY configuration.")
             if response.status_code == 404:
                 raise ValueError(f"Resource not found: {path}")
+            if response.status_code == 400:
+                error_detail = response.text
+                logger.error(f"Bad request to {url}: {error_detail}")
+                raise ValueError(f"Bad request to {path}: {error_detail}")
 
             response.raise_for_status()
             return response.json()
@@ -108,7 +112,9 @@ class OpenWearablesClient:
             "end_date": end_date,
             "limit": limit,
         }
-        return await self._request("GET", f"/api/v1/users/{user_id}/summaries/sleep", params=params)
+        path = f"/api/v1/users/{user_id}/summaries/sleep"
+        logger.info(f"get_sleep_summaries: user_id={user_id!r} (len={len(user_id) if user_id else 0})")
+        return await self._request("GET", path, params=params)
 
     async def get_workouts(
         self,
@@ -138,6 +144,7 @@ class OpenWearablesClient:
         }
         if workout_type:
             params["record_type"] = workout_type
+        logger.info(f"get_workouts: user_id={user_id!r} (len={len(user_id) if user_id else 0})")
         return await self._request("GET", f"/api/v1/users/{user_id}/events/workouts", params=params)
 
 
