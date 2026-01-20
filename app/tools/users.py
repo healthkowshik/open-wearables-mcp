@@ -3,11 +3,12 @@
 import logging
 
 from app.services.api_client import client
+from app.tools.models import ListUsersResponse, User
 
 logger = logging.getLogger(__name__)
 
 
-async def list_users(search: str | None = None) -> dict:
+async def list_users(search: str | None = None) -> ListUsersResponse:
     """
     List all users accessible via the configured API key.
 
@@ -44,22 +45,22 @@ async def list_users(search: str | None = None) -> dict:
         # Extract user data from paginated response
         users = response.get("items", [])
 
-        return {
-            "users": [
-                {
-                    "id": str(user.get("id")),
-                    "first_name": user.get("first_name"),
-                    "last_name": user.get("last_name"),
-                    "email": user.get("email"),
-                }
+        return ListUsersResponse(
+            users=[
+                User(
+                    id=str(user.get("id")),
+                    first_name=user.get("first_name"),
+                    last_name=user.get("last_name"),
+                    email=user.get("email"),
+                )
                 for user in users
             ],
-            "total": response.get("total", len(users)),
-        }
+            total=response.get("total", len(users)),
+        )
 
     except ValueError as e:
         logger.error(f"API error in list_users: {e}")
-        return {"error": str(e), "users": [], "total": 0}
+        return ListUsersResponse(error=str(e))
     except Exception as e:
         logger.exception(f"Unexpected error in list_users: {e}")
-        return {"error": f"Failed to fetch users: {e}", "users": [], "total": 0}
+        return ListUsersResponse(error=f"Failed to fetch users: {e}")
