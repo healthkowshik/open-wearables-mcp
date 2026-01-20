@@ -11,12 +11,17 @@ logger = logging.getLogger(__name__)
 
 
 class OpenWearablesClient:
-    """Client for interacting with Open Wearables REST API."""
+    """Client for interacting with Open Wearables REST API.
+
+    Uses a persistent httpx.AsyncClient for connection pooling and efficiency.
+    The client is lazily initialized on first request and reused for subsequent requests.
+    """
 
     def __init__(self) -> None:
         self.base_url = settings.open_wearables_api_url.rstrip("/")
         self.timeout = settings.request_timeout
         self._api_key = settings.open_wearables_api_key.get_secret_value()
+        self._http_client: httpx.AsyncClient | None = None
 
     def _ensure_configured(self) -> None:
         """Raise an error if the API key is not configured."""
@@ -33,31 +38,48 @@ class OpenWearablesClient:
             "Content-Type": "application/json",
         }
 
+    async def _get_client(self) -> httpx.AsyncClient:
+        """Get or create the HTTP client with connection pooling."""
+        if self._http_client is None or self._http_client.is_closed:
+            logger.debug("Creating new httpx.AsyncClient with connection pool")
+            self._http_client = httpx.AsyncClient(
+                timeout=self.timeout,
+                headers=self.headers,
+                base_url=self.base_url,
+            )
+        return self._http_client
+
+    async def close(self) -> None:
+        """Close the HTTP client and release connections."""
+        if self._http_client is not None and not self._http_client.is_closed:
+            logger.debug("Closing httpx.AsyncClient")
+            await self._http_client.aclose()
+            self._http_client = None
+
     async def _request(self, method: str, path: str, **kwargs: Any) -> dict[str, Any]:
         """Make an HTTP request to the backend API."""
         self._ensure_configured()
-        url = f"{self.base_url}{path}"
-        logger.debug(f"Making {method} request to {url}")
+        url = path  # base_url is set on the client
+        logger.debug(f"Making {method} request to {self.base_url}{path}")
 
-        async with httpx.AsyncClient(timeout=self.timeout) as client:
-            response = await client.request(
-                method=method,
-                url=url,
-                headers=self.headers,
-                **kwargs,
-            )
+        http_client = await self._get_client()
+        response = await http_client.request(
+            method=method,
+            url=url,
+            **kwargs,
+        )
 
-            if response.status_code == 401:
-                raise ValueError("Invalid API key. Check your OPEN_WEARABLES_API_KEY configuration.")
-            if response.status_code == 404:
-                raise ValueError(f"Resource not found: {path}")
-            if response.status_code == 400:
-                error_detail = response.text
-                logger.error(f"Bad request to {url}: {error_detail}")
-                raise ValueError(f"Bad request to {path}: {error_detail}")
+        if response.status_code == 401:
+            raise ValueError("Invalid API key. Check your OPEN_WEARABLES_API_KEY configuration.")
+        if response.status_code == 404:
+            raise ValueError(f"Resource not found: {path}")
+        if response.status_code == 400:
+            error_detail = response.text
+            logger.error(f"Bad request to {self.base_url}{path}: {error_detail}")
+            raise ValueError(f"Bad request to {path}: {error_detail}")
 
-            response.raise_for_status()
-            return response.json()
+        response.raise_for_status()
+        return response.json()
 
     async def get_users(self, search: str | None = None, limit: int = 100) -> dict[str, Any]:
         """
@@ -70,7 +92,7 @@ class OpenWearablesClient:
         Returns:
             Paginated response with users list
         """
-        params = {"limit": limit}
+        params: dict[str, Any] = {"limit": limit}
         if search:
             params["search"] = search
 

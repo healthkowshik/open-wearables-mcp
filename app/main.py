@@ -1,10 +1,13 @@
 """Open Wearables MCP Server - Main entry point."""
 
 import logging
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 
 from fastmcp import FastMCP
 
 from app.config import settings
+from app.services.api_client import client
 from app.tools.sleep import get_sleep_records
 from app.tools.users import list_users
 from app.tools.workouts import get_workouts
@@ -16,6 +19,22 @@ logging.basicConfig(
 )
 
 logger = logging.getLogger(__name__)
+
+
+@asynccontextmanager
+async def lifespan(app: FastMCP) -> AsyncIterator[None]:
+    """Manage application lifecycle - startup and shutdown.
+
+    Note: In FastMCP, lifespan runs per-client-session, not per-server.
+    This is still useful for cleanup when the session ends.
+    """
+    logger.info("MCP session starting - HTTP client will be initialized on first request")
+    try:
+        yield
+    finally:
+        logger.info("MCP session ending - closing HTTP client")
+        await client.close()
+
 
 # Create FastMCP server instance
 mcp = FastMCP(
@@ -35,6 +54,7 @@ mcp = FastMCP(
 
     The API key determines which users you can access (personal, team, or enterprise scope).
     """,
+    lifespan=lifespan,
 )
 
 # Register tools
