@@ -97,6 +97,12 @@ async def get_workouts(
     # Validate days parameter
     days = min(max(1, days), 90)
 
+    # Log inputs for debugging
+    logger.info(
+        f"get_workouts called with user_id={user_id!r} (type={type(user_id).__name__}), "
+        f"user_name={user_name!r}, days={days}, workout_type={workout_type!r}"
+    )
+
     try:
         # Step 1: Resolve user ID (same pattern as sleep tool)
         resolved_user = None
@@ -176,6 +182,7 @@ async def get_workouts(
         # Step 2: Calculate date range
         assert resolved_user is not None
         user_id_str = str(resolved_user["id"])
+        logger.info(f"Resolved user_id_str={user_id_str!r} (len={len(user_id_str)})")
         end_date = datetime.now(UTC)
         start_date = end_date - timedelta(days=days)
 

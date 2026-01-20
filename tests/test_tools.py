@@ -76,3 +76,55 @@ async def test_get_workouts():
             assert data["user"]["first_name"] == "John"
             assert len(data["workouts"]) == 1
             assert data["workouts"][0]["type"] == "running"
+
+
+async def test_get_sleep_records_with_uuid_user_id():
+    """Test get_sleep_records with a UUID-format user_id to verify ID handling."""
+    user_uuid = "7b50b5db-03e8-44f6-8bef-21d5c3a8b30a"
+    mock_user = {"id": user_uuid, "first_name": "Health", "last_name": "Kowshik"}
+    mock_sleep = {
+        "data": [{"date": "2025-01-15", "start_time": "23:00", "end_time": "07:00", "duration_minutes": 480}]
+    }
+
+    with (
+        patch("app.tools.sleep.client.get_user", new_callable=AsyncMock, return_value=mock_user) as mock_get_user,
+        patch("app.tools.sleep.client.get_sleep_summaries", new_callable=AsyncMock, return_value=mock_sleep) as mock_get_sleep,
+    ):
+        async with Client(mcp) as client:
+            result = await client.call_tool("get_sleep_records", {"user_id": user_uuid, "days": 7})
+
+            # Verify get_user was called with the full UUID
+            mock_get_user.assert_called_once_with(user_uuid)
+
+            # Verify get_sleep_summaries was called with the full UUID
+            call_args = mock_get_sleep.call_args
+            assert call_args.kwargs["user_id"] == user_uuid, f"Expected {user_uuid}, got {call_args.kwargs['user_id']}"
+
+            assert isinstance(result.content[0], TextContent)
+            data = json.loads(result.content[0].text)
+            assert data["user"]["id"] == user_uuid
+            assert data["user"]["first_name"] == "Health"
+
+
+async def test_get_sleep_records_with_user_name():
+    """Test get_sleep_records with user_name parameter to verify ID resolution."""
+    user_uuid = "7b50b5db-03e8-44f6-8bef-21d5c3a8b30a"
+    mock_users = {"items": [{"id": user_uuid, "first_name": "Health", "last_name": "Kowshik"}], "total": 1}
+    mock_sleep = {
+        "data": [{"date": "2025-01-15", "start_time": "23:00", "end_time": "07:00", "duration_minutes": 480}]
+    }
+
+    with (
+        patch("app.tools.sleep.client.get_users", new_callable=AsyncMock, return_value=mock_users),
+        patch("app.tools.sleep.client.get_sleep_summaries", new_callable=AsyncMock, return_value=mock_sleep) as mock_get_sleep,
+    ):
+        async with Client(mcp) as client:
+            result = await client.call_tool("get_sleep_records", {"user_name": "Health", "days": 7})
+
+            # Verify get_sleep_summaries was called with the full UUID
+            call_args = mock_get_sleep.call_args
+            assert call_args.kwargs["user_id"] == user_uuid, f"Expected {user_uuid}, got {call_args.kwargs['user_id']}"
+
+            assert isinstance(result.content[0], TextContent)
+            data = json.loads(result.content[0].text)
+            assert data["user"]["id"] == user_uuid
