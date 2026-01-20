@@ -5,6 +5,13 @@ from datetime import UTC, datetime, timedelta
 
 from app.formatters import format_duration_minutes, parse_time
 from app.services.api_client import client
+from app.tools.models import (
+    Period,
+    SleepRecord,
+    SleepRecordsResponse,
+    SleepSummary,
+    UserInfo,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -13,7 +20,7 @@ async def get_sleep_records(
     user_id: str | None = None,
     user_name: str | None = None,
     days: int = 7,
-) -> dict:
+) -> SleepRecordsResponse:
     """
     Get sleep records for a user over the last X days.
 
@@ -83,7 +90,7 @@ async def get_sleep_records(
                     "last_name": user_data.get("last_name"),
                 }
             except ValueError as e:
-                return {"error": f"User not found: {user_id}", "details": str(e)}
+                return SleepRecordsResponse(error=f"User not found: {user_id}", details=str(e))
 
         elif user_name:
             # Search for user by name
@@ -91,10 +98,10 @@ async def get_sleep_records(
             users = users_response.get("items", [])
 
             if len(users) == 0:
-                return {
-                    "error": f"No user found with name '{user_name}'",
-                    "suggestion": "Use list_users to see all available users.",
-                }
+                return SleepRecordsResponse(
+                    error=f"No user found with name '{user_name}'",
+                    suggestion="Use list_users to see all available users.",
+                )
             elif len(users) == 1:
                 user = users[0]
                 resolved_user = {
@@ -104,17 +111,17 @@ async def get_sleep_records(
                 }
             else:
                 # Multiple matches - return options
-                return {
-                    "error": f"Multiple users match '{user_name}'. Please specify user_id.",
-                    "matches": [
-                        {
-                            "id": str(u.get("id")),
-                            "first_name": u.get("first_name"),
-                            "last_name": u.get("last_name"),
-                        }
+                return SleepRecordsResponse(
+                    error=f"Multiple users match '{user_name}'. Please specify user_id.",
+                    matches=[
+                        UserInfo(
+                            id=str(u.get("id")),
+                            first_name=u.get("first_name"),
+                            last_name=u.get("last_name"),
+                        )
                         for u in users
                     ],
-                }
+                )
 
         else:
             # No user specified - check if there's only one user
@@ -122,7 +129,7 @@ async def get_sleep_records(
             users = users_response.get("items", [])
 
             if len(users) == 0:
-                return {"error": "No users found. Create a user first via the Open Wearables API."}
+                return SleepRecordsResponse(error="No users found. Create a user first via the Open Wearables API.")
             elif len(users) == 1:
                 user = users[0]
                 resolved_user = {
@@ -132,18 +139,18 @@ async def get_sleep_records(
                 }
             else:
                 # Multiple users - need to specify
-                return {
-                    "error": "Multiple users available. Please specify user_id or user_name.",
-                    "available_users": [
-                        {
-                            "id": str(u.get("id")),
-                            "first_name": u.get("first_name"),
-                            "last_name": u.get("last_name"),
-                        }
+                return SleepRecordsResponse(
+                    error="Multiple users available. Please specify user_id or user_name.",
+                    available_users=[
+                        UserInfo(
+                            id=str(u.get("id")),
+                            first_name=u.get("first_name"),
+                            last_name=u.get("last_name"),
+                        )
                         for u in users[:10]  # Limit to first 10
                     ],
-                    "total_users": len(users),
-                }
+                    total_users=len(users),
+                )
 
         # Step 2: Calculate date range
         assert resolved_user is not None
@@ -164,8 +171,8 @@ async def get_sleep_records(
         records_data = sleep_response.get("data", [])
 
         # Step 4: Transform records
-        records = []
-        durations = []
+        records: list[SleepRecord] = []
+        durations: list[int] = []
 
         for record in records_data:
             duration = record.get("duration_minutes")
@@ -174,47 +181,43 @@ async def get_sleep_records(
 
             source = record.get("source", {})
             records.append(
-                {
-                    "date": str(record.get("date")),
-                    "start_time": parse_time(record.get("start_time")),
-                    "end_time": parse_time(record.get("end_time")),
-                    "duration_minutes": duration,
-                    "duration_formatted": format_duration_minutes(duration),
-                    "source": source.get("provider") if isinstance(source, dict) else source,
-                }
+                SleepRecord(
+                    date=str(record.get("date")),
+                    start_time=parse_time(record.get("start_time")),
+                    end_time=parse_time(record.get("end_time")),
+                    duration_minutes=duration,
+                    duration_formatted=format_duration_minutes(duration),
+                    source=source.get("provider") if isinstance(source, dict) else source,
+                )
             )
 
         # Step 5: Calculate summary statistics
-        summary = {
-            "total_nights": len(records),
-            "nights_with_data": len(durations),
-            "avg_duration_minutes": None,
-            "avg_duration_formatted": None,
-            "min_duration_minutes": None,
-            "max_duration_minutes": None,
-        }
+        summary = SleepSummary(
+            total_nights=len(records),
+            nights_with_data=len(durations),
+        )
 
         if durations:
             avg = sum(durations) / len(durations)
-            summary.update(
-                {
-                    "avg_duration_minutes": round(avg),
-                    "avg_duration_formatted": format_duration_minutes(round(avg)),
-                    "min_duration_minutes": min(durations),
-                    "max_duration_minutes": max(durations),
-                }
-            )
+            summary.avg_duration_minutes = round(avg)
+            summary.avg_duration_formatted = format_duration_minutes(round(avg))
+            summary.min_duration_minutes = min(durations)
+            summary.max_duration_minutes = max(durations)
 
-        return {
-            "user": resolved_user,
-            "period": {"start": start_str, "end": end_str},
-            "records": records,
-            "summary": summary,
-        }
+        return SleepRecordsResponse(
+            user=UserInfo(
+                id=str(resolved_user["id"]),
+                first_name=resolved_user["first_name"],
+                last_name=resolved_user["last_name"],
+            ),
+            period=Period(start=start_str, end=end_str),
+            records=records,
+            summary=summary,
+        )
 
     except ValueError as e:
         logger.error(f"API error in get_sleep_records: {e}")
-        return {"error": str(e)}
+        return SleepRecordsResponse(error=str(e))
     except Exception as e:
         logger.exception(f"Unexpected error in get_sleep_records: {e}")
-        return {"error": f"Failed to fetch sleep records: {e}"}
+        return SleepRecordsResponse(error=f"Failed to fetch sleep records: {e}")

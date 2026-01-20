@@ -11,6 +11,13 @@ from app.formatters import (
     parse_datetime,
 )
 from app.services.api_client import client
+from app.tools.models import (
+    Period,
+    UserInfo,
+    WorkoutRecord,
+    WorkoutsResponse,
+    WorkoutSummary,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -20,7 +27,7 @@ async def get_workouts(
     user_name: str | None = None,
     days: int = 7,
     workout_type: str | None = None,
-) -> dict:
+) -> WorkoutsResponse:
     """
     Get workout records for a user over the last X days.
 
@@ -104,7 +111,7 @@ async def get_workouts(
                     "last_name": user_data.get("last_name"),
                 }
             except ValueError as e:
-                return {"error": f"User not found: {user_id}", "details": str(e)}
+                return WorkoutsResponse(error=f"User not found: {user_id}", details=str(e))
 
         elif user_name:
             # Search for user by name
@@ -112,10 +119,10 @@ async def get_workouts(
             users = users_response.get("items", [])
 
             if len(users) == 0:
-                return {
-                    "error": f"No user found with name '{user_name}'",
-                    "suggestion": "Use list_users to see all available users.",
-                }
+                return WorkoutsResponse(
+                    error=f"No user found with name '{user_name}'",
+                    suggestion="Use list_users to see all available users.",
+                )
             elif len(users) == 1:
                 user = users[0]
                 resolved_user = {
@@ -125,17 +132,17 @@ async def get_workouts(
                 }
             else:
                 # Multiple matches - return options
-                return {
-                    "error": f"Multiple users match '{user_name}'. Please specify user_id.",
-                    "matches": [
-                        {
-                            "id": str(u.get("id")),
-                            "first_name": u.get("first_name"),
-                            "last_name": u.get("last_name"),
-                        }
+                return WorkoutsResponse(
+                    error=f"Multiple users match '{user_name}'. Please specify user_id.",
+                    matches=[
+                        UserInfo(
+                            id=str(u.get("id")),
+                            first_name=u.get("first_name"),
+                            last_name=u.get("last_name"),
+                        )
                         for u in users
                     ],
-                }
+                )
 
         else:
             # No user specified - check if there's only one user
@@ -143,7 +150,7 @@ async def get_workouts(
             users = users_response.get("items", [])
 
             if len(users) == 0:
-                return {"error": "No users found. Create a user first via the Open Wearables API."}
+                return WorkoutsResponse(error="No users found. Create a user first via the Open Wearables API.")
             elif len(users) == 1:
                 user = users[0]
                 resolved_user = {
@@ -153,18 +160,18 @@ async def get_workouts(
                 }
             else:
                 # Multiple users - need to specify
-                return {
-                    "error": "Multiple users available. Please specify user_id or user_name.",
-                    "available_users": [
-                        {
-                            "id": str(u.get("id")),
-                            "first_name": u.get("first_name"),
-                            "last_name": u.get("last_name"),
-                        }
+                return WorkoutsResponse(
+                    error="Multiple users available. Please specify user_id or user_name.",
+                    available_users=[
+                        UserInfo(
+                            id=str(u.get("id")),
+                            first_name=u.get("first_name"),
+                            last_name=u.get("last_name"),
+                        )
                         for u in users[:10]  # Limit to first 10
                     ],
-                    "total_users": len(users),
-                }
+                    total_users=len(users),
+                )
 
         # Step 2: Calculate date range
         assert resolved_user is not None
@@ -186,7 +193,7 @@ async def get_workouts(
         records_data = workouts_response.get("data", [])
 
         # Step 4: Transform records
-        workouts = []
+        workouts: list[WorkoutRecord] = []
         workout_types: list[str] = []
         total_duration = 0
         total_distance = 0.0
@@ -224,48 +231,52 @@ async def get_workouts(
             source_provider = source.get("provider") if isinstance(source, dict) else source
 
             workouts.append(
-                {
-                    "date": date_str,
-                    "type": wtype,
-                    "name": record.get("name"),
-                    "start_time": start_time_str,
-                    "end_time": end_time_str,
-                    "duration_seconds": duration,
-                    "duration_formatted": format_duration_seconds(duration),
-                    "distance_meters": distance,
-                    "distance_formatted": format_distance_km(distance),
-                    "calories_kcal": calories,
-                    "avg_heart_rate_bpm": record.get("avg_heart_rate_bpm"),
-                    "max_heart_rate_bpm": record.get("max_heart_rate_bpm"),
-                    "pace_formatted": format_pace(record.get("avg_pace_sec_per_km")),
-                    "elevation_gain_meters": record.get("elevation_gain_meters"),
-                    "source": source_provider,
-                }
+                WorkoutRecord(
+                    date=date_str,
+                    type=wtype,
+                    name=record.get("name"),
+                    start_time=start_time_str,
+                    end_time=end_time_str,
+                    duration_seconds=duration,
+                    duration_formatted=format_duration_seconds(duration),
+                    distance_meters=distance,
+                    distance_formatted=format_distance_km(distance),
+                    calories_kcal=calories,
+                    avg_heart_rate_bpm=record.get("avg_heart_rate_bpm"),
+                    max_heart_rate_bpm=record.get("max_heart_rate_bpm"),
+                    pace_formatted=format_pace(record.get("avg_pace_sec_per_km")),
+                    elevation_gain_meters=record.get("elevation_gain_meters"),
+                    source=source_provider,
+                )
             )
 
         # Step 5: Calculate summary statistics
         workouts_by_type = dict(Counter(workout_types))
 
-        summary = {
-            "total_workouts": len(workouts),
-            "workouts_by_type": workouts_by_type if workouts_by_type else None,
-            "total_duration_seconds": total_duration if total_duration > 0 else None,
-            "total_duration_formatted": format_duration_seconds(total_duration) if total_duration > 0 else None,
-            "total_distance_meters": total_distance if total_distance > 0 else None,
-            "total_distance_formatted": format_distance_km(total_distance) if total_distance > 0 else None,
-            "total_calories_kcal": round(total_calories) if total_calories > 0 else None,
-        }
+        summary = WorkoutSummary(
+            total_workouts=len(workouts),
+            workouts_by_type=workouts_by_type if workouts_by_type else None,
+            total_duration_seconds=total_duration if total_duration > 0 else None,
+            total_duration_formatted=format_duration_seconds(total_duration) if total_duration > 0 else None,
+            total_distance_meters=total_distance if total_distance > 0 else None,
+            total_distance_formatted=format_distance_km(total_distance) if total_distance > 0 else None,
+            total_calories_kcal=round(total_calories) if total_calories > 0 else None,
+        )
 
-        return {
-            "user": resolved_user,
-            "period": {"start": start_str, "end": end_str},
-            "workouts": workouts,
-            "summary": summary,
-        }
+        return WorkoutsResponse(
+            user=UserInfo(
+                id=str(resolved_user["id"]),
+                first_name=resolved_user["first_name"],
+                last_name=resolved_user["last_name"],
+            ),
+            period=Period(start=start_str, end=end_str),
+            workouts=workouts,
+            summary=summary,
+        )
 
     except ValueError as e:
         logger.error(f"API error in get_workouts: {e}")
-        return {"error": str(e)}
+        return WorkoutsResponse(error=str(e))
     except Exception as e:
         logger.exception(f"Unexpected error in get_workouts: {e}")
-        return {"error": f"Failed to fetch workouts: {e}"}
+        return WorkoutsResponse(error=f"Failed to fetch workouts: {e}")
